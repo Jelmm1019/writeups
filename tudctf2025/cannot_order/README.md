@@ -16,7 +16,7 @@ When you open the **webpage**, you are greeted with a **simple webshop** where w
 
 ![pizza shop](image.png)
 
-Notice we cannot order the **Flag** item. **Only chefs** can access this item. When looking at the source code, we see that the authorization is stored in a `chef_session` **cookie**, which isn't protected by the `http-only` flag (!):
+Notice we cannot order the **Flag** item. **Only chefs** can access this item. When looking at the source code, we see that the authorization is stored in a `chef_session` **cookie**, which isn't protected by the [`http-only`](https://owasp.org/www-community/HttpOnly) flag (!):
 
 ```go
 func handleChefLogin(w http.ResponseWriter, r *http.Request) {
