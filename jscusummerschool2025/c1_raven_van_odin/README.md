@@ -32,7 +32,7 @@ cat conn.log | zeek-cut id.orig_h id.resp_h id.resp_p | sort | uniq | awk '{prin
 This results in to following output:
 
 ```bash
-     10 10.52.119.24 10.237.12.184
+     10 10.52.119.24 10.237.12.184      <-!
       3 10.9.98.47 10.42.113.86
       3 10.9.94.77 10.10.109.26
       3 10.9.92.165 10.10.106.154
@@ -73,17 +73,107 @@ This confirms our suspicions. `10.52.119.24` is the malicious actor that scanned
 
 ### 2 Phishing Email?
 
+Since we know the ip address of the attacker, we can filter the smtp logs on that ip to find all the email sent:
+
+```bash
+cat smtp.log | zeek-cut id.orig_h id.resp_h id.resp_p mailfrom rcptto from to subject fuids | awk '$1=="10.52.119.24"'
+```
+
+```bash
+10.52.119.24    10.237.12.184   25      sales@gerifreki.com     loki@midgard.com        <sales@gerifreki.com>   <loki@midgard.com>      Exclusieve Aanbieding: De Legendarische Gungnir Speer!  F3uozs2aBPGgCG0njk
+```
+
+The phishing mail is sent from `sales@gerifreki.com` to `loki@midgard.com`.
+
 
 ### 3 Malware?
+
+The file with fuid `F3uozs2aBPGgCG0njk` is sent with the email.
+
+```bash
+1734532460.348234   F3uozs2aBPGgCG0njk  CZ7ZIyAjmNJjNFLql   10.52.119.24	52410	10.237.12.184	25	SMTP	2	(empty)	text/plain	-	0.000000	T	T	1140	-	0	0	F-	-	-	-	-	-	-
+```
+
+But the size is 0, so this is not the malware. There is probably some link in the email that downloads the malware to the victim machine. This is commonly done over http requests. Lets verify this hunch with the following search:
+
+```bash
+cat http.log | zeek-cut ts id.orig_h id.resp_h id.resp_p uri response_body_len status_code resp_fuids resp_mime_types | awk '$9 ~ /^application/'
+```
+
+```bash
+1734532465.942224       10.237.13.217   10.52.130.83    80      /muninn 5197336 200     FotpL24FrMEAPUwJ1l      application/x-executable
+1734532479.845104       10.237.13.217   10.52.130.83    80      /huginn 3406744 200     FKQYpy1NgK8EJEu3X9      application/x-executable
+```
+
+`muninn` (5MB) and `huginn` (3MB) are the malware executables that are hosted on `http://10.52.130.83:80` and downloaded on `10.237.13.217`. 
 
 
 ### 4 Beacons?
 
+Now that we know the victim ip (`10.237.13.217`), we can find all the connections it made in `conn.log`:
+
+```bash
+cat conn.log | zeek-cut ts uid id.orig_h id.resp_h id.resp_p proto service conn_state resp_pkts | awk '$3=="10.237.13.217"' | sort -n
+```
+
+```bash
+1734532465.941761       CbOqQV3pd69naq0myh      10.237.13.217   10.52.130.83    80      tcp     http    S2      100     <-malware
+1734532479.844566       CBYRCU1ShWU2KqhMQh      10.237.13.217   10.52.130.83    80      tcp     http    S2      159     <-malware
+1734532487.030101       CnNiVezKj3S9QYpV3       10.237.13.217   10.52.78.13     80      tcp     http    SF      6
+1734532491.806362       CftHjl3WSc6EhuM2qh      10.237.13.217   10.52.78.13     22      tcp     ssh     SF      18      <-!
+1734532507.001601       ChmfGgIcUZL7O8s0e       10.237.13.217   10.52.78.13     22      tcp     ssh     SF      18      <-!
+1734532522.203910       CA3pRE2HSRNRtceUZc      10.237.13.217   10.52.78.13     22      tcp     -       SF      18      <-!
+```
+
+As the output shows, the victim machine reaches out to some unknown domain over ssh, so lets check the ssh logs:
+
+```bash
+cat ssh.log | zeek-cut ts id.orig_h id.resp_h id.resp_p client server | awk '$2=="10.237.13.217"' | sort -n
+```
+
+```bash
+1734532491.806765       10.237.13.217   10.52.78.13     22      SSH-2.0-Go      - -
+1734532496.806765       10.237.13.217   10.52.78.13     22      SSH-2.0-Go      - -
+1734532501.456724       10.237.13.217   10.52.78.13     22      SSH-2.0-Go      - -
+1734532507.003211       10.237.13.217   10.52.78.13     22      SSH-2.0-Go      - -
+1734532513.586820       10.237.13.217   10.52.78.13     22      SSH-2.0-Go      - -
+1734532518.204898       10.237.13.217   10.52.78.13     22      SSH-2.0-Go      - -
+1734532522.204898       10.237.13.217   10.52.78.13     22      SSH-2.0-Go      - -
+```
+
+This looks like an SSH beacon to the attackers machine (`10.52.78.13`) that tries a connection about every 5 seconds.
+
 
 ### 5 Data Exfiltration?
 
+Then there was this one last connection left from the victim machine that we didn't research yet:
+
+>```bash
+>1734532465.941761       CbOqQV3pd69naq0myh      10.237.13.217   10.52.130.83    80      tcp     http    S2      100
+>1734532479.844566       CBYRCU1ShWU2KqhMQh      10.237.13.217   10.52.130.83    80      tcp     http    S2      159
+>1734532487.030101       CnNiVezKj3S9QYpV3       10.237.13.217   10.52.78.13     80      tcp     http    SF      6      <-!
+>1734532491.806362       CftHjl3WSc6EhuM2qh      10.237.13.217   10.52.78.13     22      tcp     ssh     SF      18     
+>1734532507.001601       ChmfGgIcUZL7O8s0e       10.237.13.217   10.52.78.13     22      tcp     ssh     SF      18
+>1734532522.203910       CA3pRE2HSRNRtceUZc      10.237.13.217   10.52.78.13     22      tcp     -       SF      18
+>```
+
+We can find the http request in `http.log`:
+
+```bash
+cat http.log | zeek-cut ts uid id.orig_h id.resp_h id.resp_p method uri response_body_len status_code resp_fuids resp_filenames resp_mime_types | awk '$2=="CnNiVezKj3S9QYpV3"'
+```
+
+```bash
+1734532487.031406       CnNiVezKj3S9QYpV3       10.237.13.217   10.52.78.13     80      POST    /       20      200     F6mSul4D3u8OjR7fmk      -       text/plain
+```
+
+A POST request is made from the target to a webserver. The request is used to upload data. To find the exact file that is being uploaded, simply use `grep` (in `files.log`) with the `fuid` of the file that is uploaded to exfiltrate data:
+
+```bash
+1734532487.033556	F6mSul4D3u8OjR7fmk	CnNiVezKj3S9QYpV3	10.237.13.217	49684	10.52.78.13	80	HTTP	0	(empty)	text/plain	De_chronieken_van_Asgard.pdf	0.000000	T	T	9411	-	0	0	F	-	-	-	-	-	-	-
+```
 
 <details>
-<summary>Yes! We got the flag:</summary> 
-
+<summary>Yes! The filename is the flag:</summary> 
+SUMMERSCHOOL{De_chronieken_van_Asgard.pdf}
 </details>
